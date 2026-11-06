@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b0f14">
-<meta name="app-build" content="20261106102404">
+<meta name="app-build" content="20261106130701">
 <title>Teleprompter</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon-192.png">
@@ -124,19 +124,21 @@ button.danger{background:#7f1d1d;border-color:#b91c1c}
 #resVideo{width:100%;max-height:50vh;background:#000;border-radius:10px}
 #resBox a{display:block;text-align:center;text-decoration:none;background:#2e7d32;color:#fff;border-radius:12px;padding:14px;font-weight:700}
 #resNote{font-size:.85rem;color:#9fb0c3;line-height:1.7;margin:0}
-#lib{position:fixed;inset:0;z-index:55;background:#0b0f14;display:flex;flex-direction:column;
+#lib,#scr{position:fixed;inset:0;z-index:55;background:#0b0f14;display:flex;flex-direction:column;
   padding:14px;padding-top:max(14px,env(safe-area-inset-top));padding-bottom:max(14px,env(safe-area-inset-bottom))}
-#lib header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
-#lib h2{margin:0;font-size:1.2rem}
-#libTools{display:flex;gap:8px;margin-bottom:8px}
-#libTools button{flex:1}
-#libList{flex:1;overflow:auto;display:flex;flex-direction:column;gap:8px}
+#lib header,#scr header{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+#lib h2,#scr h2{margin:0;font-size:1.2rem}
+#libTools,#scrTools{display:flex;gap:8px;margin-bottom:8px}
+#libTools button,#scrTools button{flex:1}
+#libList,#scrList{flex:1;overflow:auto;display:flex;flex-direction:column;gap:8px}
 .item{background:#111923;border:1px solid #2a3440;border-radius:12px;padding:10px;display:flex;flex-direction:column;gap:8px}
 .item .meta{font-size:.9rem;word-break:break-all}
 .item .meta small{display:block;color:#9fb0c3;margin-top:2px}
 .item .btns{display:flex;gap:6px}
+.item.cur{border-color:#1976d2;background:#122033}
+#curName{font-size:.85rem;color:#9fb0c3;margin:0}
 .item .btns button{flex:1;min-height:38px}
-#libEmpty{color:#9fb0c3;text-align:center;padding:30px 10px}
+#libEmpty,#scrEmpty{color:#9fb0c3;text-align:center;padding:30px 10px}
 </style>
 </head>
 <body>
@@ -153,6 +155,11 @@ button.danger{background:#7f1d1d;border-color:#b91c1c}
     <button id="btnShare">Share script</button>
     <button id="btnLib">Recordings (0)</button>
   </div>
+  <div class="row">
+    <button id="btnScripts">Scripts (0)</button>
+    <button id="btnSaveScr">Save to Scripts</button>
+  </div>
+  <p id="curName"></p>
   <p class="tip">Open file: .txt, .docx, .rtf (for PDF/DOC, copy and paste the text). Formatting: **bold**, ==highlight==, "# " at the start of a line for a heading.</p>
   <input type="file" id="file" accept=".txt,.docx,.rtf,text/plain,application/rtf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" class="hidden">
   <button id="btnStart" class="primary big">Start teleprompter ▶</button>
@@ -197,6 +204,18 @@ button.danger{background:#7f1d1d;border-color:#b91c1c}
     <button id="libDelAll" class="danger">Delete all</button>
   </div>
   <div id="libList"></div>
+</section>
+
+<section id="scr" class="hidden">
+  <header><h2>Scripts</h2><button id="scrClose">Close</button></header>
+  <div id="scrTools">
+    <button id="scrAdd">Add files</button>
+    <button id="scrNew">New script</button>
+    <button id="scrDelAll" class="danger">Delete all</button>
+  </div>
+  <p class="tip">Add many files at once (.txt, .docx, .rtf). Tap Load on the one you want to record. Edits to a loaded script are saved automatically.</p>
+  <div id="scrList"></div>
+  <input type="file" id="scrFiles" multiple accept=".txt,.docx,.rtf,text/plain,application/rtf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" class="hidden">
 </section>
 
 <div id="result" class="hidden">
@@ -577,7 +596,7 @@ document.addEventListener('keydown', function(e){
     return;
   }
   if(prompter.classList.contains('hidden')) return;
-  if(!$('result').classList.contains('hidden') || !$('lib').classList.contains('hidden')) return;
+  if(!$('result').classList.contains('hidden') || !$('lib').classList.contains('hidden') || !$('scr').classList.contains('hidden')) return;
   var t = e.target && e.target.tagName;
   if(t === 'INPUT' || t === 'TEXTAREA' || t === 'SELECT') return;
   var hit = null;
@@ -1274,7 +1293,8 @@ var saveT = null;
 scriptEl.addEventListener('input', function(){
   updateWc();
   clearTimeout(saveT);
-  saveT = setTimeout(function(){ try{ localStorage.setItem('tp_script', scriptEl.value); }catch(e){} }, 400);
+  saveT = setTimeout(function(){ try{ localStorage.setItem('tp_script', scriptEl.value); }catch(e){}
+    var c = window.__scrReady && curId && findScr(curId); if(c){ c.text = scriptEl.value; persistScripts(); } }, 400);
 });
 try{ scriptEl.value = localStorage.getItem('tp_script') || ''; }catch(e){}
 updateWc();
@@ -1378,25 +1398,106 @@ function rtfToText(s){
   }
   return out.replace(/\n{3,}/g, '\n\n').trim();
 }
+function readScriptFile(f){
+  var nm = f.name.toLowerCase();
+  if(nm.slice(-5) === '.docx') return f.arrayBuffer().then(docxToText);
+  if(nm.slice(-4) === '.rtf') return f.text().then(rtfToText);
+  if(nm.slice(-4) === '.doc' || nm.slice(-4) === '.pdf') return Promise.reject(new Error('unsupported'));
+  return f.text();
+}
 $('btnFile').onclick = function(){ $('file').click(); };
 $('file').onchange = function(e){
   var f = e.target.files && e.target.files[0]; if(!f) return;
-  var nm = f.name.toLowerCase();
-  var put = function(t){
+  readScriptFile(f).then(function(t){
     if(!t){ toast('No text found in this file'); return; }
-    scriptEl.value = t; scriptEl.dispatchEvent(new Event('input')); toast('Script loaded');
-  };
-  if(nm.slice(-5) === '.docx'){
-    f.arrayBuffer().then(docxToText).then(put).catch(function(){ toast('Could not read this .docx. Copy and paste the text instead.'); });
-  } else if(nm.slice(-4) === '.rtf'){
-    f.text().then(function(t){ put(rtfToText(t)); }).catch(function(){ toast('Could not read this .rtf'); });
-  } else if(nm.slice(-4) === '.doc' || nm.slice(-4) === '.pdf'){
-    toast('Old .doc and .pdf files are not supported. Save as .docx/.txt or copy and paste.');
-  } else {
-    f.text().then(put).catch(function(){ toast('Could not read this file'); });
-  }
+    curId = null; saveCur(); scriptEl.value = t; scriptEl.dispatchEvent(new Event('input')); toast('Script loaded');
+  }).catch(function(err){
+    toast(err && err.message === 'unsupported' ? 'Old .doc and .pdf files are not supported. Save as .docx/.txt or copy and paste.' : 'Could not read this file');
+  });
   e.target.value = '';
 };
+
+/* ---------- Scripts library (many scripts, load one at a time) ---------- */
+var scripts = [], curId = null;
+try{ scripts = JSON.parse(localStorage.getItem('tp_scripts') || '[]') || []; }catch(e){ scripts = []; }
+try{ curId = localStorage.getItem('tp_cur') || null; }catch(e){}
+if(curId && !scripts.some(function(x){ return x.id === curId; })) curId = null;
+function saveCur(){ try{ if(curId) localStorage.setItem('tp_cur', curId); else localStorage.removeItem('tp_cur'); }catch(e){} refreshScrUi(); }
+function persistScripts(){
+  try{ localStorage.setItem('tp_scripts', JSON.stringify(scripts)); return true; }
+  catch(e){ toast('Storage is full. Delete some scripts.'); return false; }
+}
+function findScr(id){ for(var i = 0; i < scripts.length; i++) if(scripts[i].id === id) return scripts[i]; return null; }
+function wordCount(t){ t = (t || '').trim(); return t ? t.split(/\s+/).length : 0; }
+function guessTitle(t){ var l = (t || '').trim().split('\n')[0].replace(/^#+\s*/, '').trim(); return (l.length > 40 ? l.slice(0, 40) + '…' : l) || 'Untitled'; }
+function newId(){ return 's' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+function refreshScrUi(){
+  $('btnScripts').textContent = 'Scripts (' + scripts.length + ')';
+  var c = curId && findScr(curId);
+  $('curName').textContent = c ? 'Loaded script: ' + c.title : '';
+  $('btnSaveScr').textContent = c ? 'Rename script' : 'Save to Scripts';
+}
+function renderScr(){
+  var box = $('scrList'); box.innerHTML = '';
+  if(!scripts.length){ var e = document.createElement('div'); e.id = 'scrEmpty'; e.textContent = 'No scripts yet. Tap "Add files" to load many at once.'; box.appendChild(e); return; }
+  scripts.forEach(function(x){
+    var it = document.createElement('div'); it.className = 'item' + (x.id === curId ? ' cur' : '');
+    var m = document.createElement('div'); m.className = 'meta';
+    m.textContent = x.title; m.dir = 'auto';
+    var sm = document.createElement('small'); sm.textContent = wordCount(x.text) + ' words'; m.appendChild(sm);
+    var b = document.createElement('div'); b.className = 'btns';
+    function btn(label, fn, cls){ var k = document.createElement('button'); k.textContent = label; if(cls) k.className = cls; k.onclick = fn; b.appendChild(k); }
+    btn('Load', function(){ loadScr(x.id); });
+    btn('Rename', function(){ var n = prompt('Script name', x.title); if(n && n.trim()){ x.title = n.trim(); persistScripts(); renderScr(); refreshScrUi(); } });
+    btn('Delete', function(){ if(!confirm('Delete "' + x.title + '"?')) return; scripts = scripts.filter(function(y){ return y.id !== x.id; }); if(curId === x.id){ curId = null; saveCur(); } persistScripts(); renderScr(); refreshScrUi(); }, 'danger');
+    it.appendChild(m); it.appendChild(b); box.appendChild(it);
+  });
+}
+function loadScr(id){
+  var x = findScr(id); if(!x) return;
+  curId = id; saveCur();
+  scriptEl.value = x.text; scriptEl.dispatchEvent(new Event('input'));
+  try{ localStorage.setItem('tp_script', x.text); }catch(e){}
+  $('scr').classList.add('hidden');
+  toast('Loaded: ' + x.title);
+}
+$('btnScripts').onclick = function(){ renderScr(); $('scr').classList.remove('hidden'); };
+$('scrClose').onclick = function(){ $('scr').classList.add('hidden'); };
+$('scrAdd').onclick = function(){ $('scrFiles').click(); };
+$('scrFiles').onchange = function(e){
+  var files = Array.prototype.slice.call(e.target.files || []); e.target.value = '';
+  if(!files.length) return;
+  var added = 0, bad = 0;
+  files.reduce(function(chain, f){
+    return chain.then(function(){ return readScriptFile(f).then(function(t){
+      if(t){ scripts.push({id:newId(), title:f.name.replace(/\.[^.]+$/, ''), text:t, ts:Date.now()}); added++; } else bad++;
+    }).catch(function(){ bad++; }); });
+  }, Promise.resolve()).then(function(){
+    persistScripts(); renderScr(); refreshScrUi();
+    toast(added + ' script' + (added === 1 ? '' : 's') + ' added' + (bad ? ', ' + bad + ' could not be read' : ''));
+  });
+};
+$('scrNew').onclick = function(){
+  curId = null; saveCur(); scriptEl.value = ''; scriptEl.dispatchEvent(new Event('input'));
+  try{ localStorage.setItem('tp_script', ''); }catch(e){}
+  $('scr').classList.add('hidden');
+};
+$('scrDelAll').onclick = function(){
+  if(!scripts.length) return;
+  if(!confirm('Delete ALL ' + scripts.length + ' scripts?')) return;
+  scripts = []; curId = null; saveCur(); persistScripts(); renderScr();
+};
+$('btnSaveScr').onclick = function(){
+  var c = curId && findScr(curId);
+  if(c){ var n = prompt('Script name', c.title); if(n && n.trim()){ c.title = n.trim(); persistScripts(); refreshScrUi(); } return; }
+  var t = scriptEl.value;
+  if(!t.trim()){ toast('Write or paste a script first'); return; }
+  var n2 = prompt('Script name', guessTitle(t)); if(n2 === null) return;
+  var x = {id:newId(), title:(n2.trim() || guessTitle(t)), text:t, ts:Date.now()};
+  scripts.push(x); curId = x.id; persistScripts(); saveCur(); toast('Saved to Scripts');
+};
+refreshScrUi();
+window.__scrReady = true;
 
 /* ---------- Build the prompter text (with simple formatting) ---------- */
 function addRich(p, line){
